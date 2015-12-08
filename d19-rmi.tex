@@ -87,7 +87,17 @@ cannot execute the methods on the server objects directly; they would
 need a pointer to the object, and pointers can only exist inside their
 own memory space. 
 
-In order to be able to call methods on objects that do no exist on
+RMI treats a remote object differently from a non-remote object when the object 
+is passed from one Java virtual machine to another Java virtual machine. 
+Rather than making a copy of the implementation object in the receiving Java 
+virtual machine, RMI passes a remote stub for a remote object. 
+The stub acts as the local representative, or \emph{proxy}, 
+for the remote object and basically is, 
+to the client, the remote reference. 
+The client invokes a method on the local stub, which is responsible for carrying out 
+the method invocation on the remote object.
+
+To be able to call methods on objects that do no exist on
 their own machine, clients ask the \emph{registry} for a \emph{stub} to the
 server. The registry is a special kind of program ---a sort of white
 pages--- where servers can register themselves, and then clients can
@@ -106,14 +116,15 @@ The stub implements the same interface (i.e.~the same methods) as the
 server, so the client can call them (Figure~\ref{fig:rmiflow}) directly. 
 However, the stub does not do any
 real computation: it ``just'' packs up the parameters provided by the client and
-sends them to the server through the network. The server receives
+sends them to the server through the network (a process known as \emph{marshalling}. 
+The server receives
 those parameters, runs the appropriate code, and returns a result
 through the network to the stub. The stub can then return this result
 to the client 
 (Figures~\ref{fig:rmiflow1},~\ref{fig:rmiflow2},~\ref{fig:rmiflow3}). 
 The good thing about RMI is that almost all the
 complexity of the network communication (opening up sockets,
-serializing objets as parameters, recovering from network errors, etc)
+serialising objets as parameters, recovering from network errors, etc)
 is hidden from the programmer. From the point of view of the programmer, it
 looks (almost) like a normal method call. 
 
@@ -158,21 +169,14 @@ beyond of the scope of this section, the basic concepts that we need
 for running simple RMI applications are simple to grasp. 
 
 Security policies are defined in text files, usually in the same
-folder as the main class is. A basic example of such a file would
+folder as the main class is. A basic example of such a file might
 have the following aspect: 
 
-\begin{verbatim}
-   grant {
-     permission java.net.SocketPermission "127.0.0.1:*", "accept,connect";
-     permission java.net.SocketPermission "192.168.0.1:80", "connect";
-   };
-\end{verbatim}
-
+\VerbatimInput{src/client.policy}
+%
 This file would allow code on this machine to accept connections from
-machines ``127.0.0.1'' (which
-means \emph{localhost}, i.e.~the machine the program is running on) on
-any port, and to connect to machine ``127.0.0.1'' on any port or to
-machine ``192.168.0.1'' on port 80. 
+machines on the local host, i.e.~the machine the program is running on) on
+any port. 
 
 % TODO: maybe a little more explanation here would be good?
 
@@ -192,23 +196,8 @@ the same string that was provided as a parameter\footnote{Such a
   www.ismycomputeron.com.}, 
 its interface may look like this: 
 
-\begin{verbatim}
-    import java.rmi.Remote;
-    import java.rmi.RemoteException;
-
-    /** 
-     * An implementation of the echo service.
-     */
-    public interface EchoService extends Remote {
-        /**
-         * Returns the same string passed as parameter
-         * @param s a string 
-         * @return the same string passed as parameter
-         */
-        public String echo(String s) throws RemoteException;
-    }
-\end{verbatim}
-
+\VerbatimInput{src/EchoService.java}
+%
 All objects used as parameters or return values in a RMI interface
 must implement the interface \verb+java.io.Serializable+. This is a
 tagging interface ---an interface with no methods--- that indicates
@@ -231,46 +220,18 @@ must be provided ---even if empty--- that throws
 \verb+RemoteException+
 
 The implementation of the interface above could look like (comments
-ommitted for brevity): 
+omitted for brevity): 
 
-\begin{verbatim}
-import java.rmi.RemoteException;
-import java.rmi.server.UnicastRemoteObject;
-
-public class EchoServer extends UnicastRemoteObject implements EchoService {
-
-    public EchoServer() throws RemoteException {
-        // nothing to initialise for this server
-    }
-
-    @Override
-    public String echo(String s) {
-        // This println is not necessary, but helps verifying whether 
-        // the server has received the call or not on the remote machine 
-        System.out.println("Replied to some client saying '" + s + "'");
-        return s;
-    }
-}
-\end{verbatim}
-
-We can now compile the server and create the stub to be sent to
-clients. Compiling the server requires a normal Java compilation: 
+\VerbatimInput{src/EchoServer.java}
+%
+We can now compile the server. The stub is generated dynamically for us using a proxy and 
+therefore we don't get to see that code. Therefore compiling 
+the server requires a normal Java compilation: 
 
 \begin{verbatim}
     javac EchoServer.java
 \end{verbatim}
-
-This will produce an \verb+EchoServer.class+ file, as we know. To
-create the stub, we must use the RMI compiler \verb+rmic+ 
-on the class file (not the source file):
-
-\begin{verbatim}
-    rmic EchoServer
-\end{verbatim}
-
-This will produce an \verb+EchoServer_stub.class+ file. We do not need
-to do anything special with it apart from generating it. RMI takes
-care of sending it to interested clients. 
+This will produce an \verb+EchoServer.class+ file, as we know. 
 
 \subsection{Launching the server}
 \label{sec:launching-server}
@@ -279,30 +240,8 @@ Launching a server consists of a series of steps that must be followed
 in sequence. They are shown in the following code (this may be in a
 different class, maybe in a file called \verb+EchoServerLauncher.java+): 
 
-\begin{verbatim}
-    private void launch() {
-        // 1. If there is no security manager, start one
-        if (System.getSecurityManager() == null) {
-            System.setSecurityManager(new RMISecurityManager());
-        }
-        try {
-            // 2. Create the registry if there is not one
-            LocateRegistry.createRegistry(1099);
-            // 3. Create the server object
-            EchoServer server = new EchoServer();
-            // 4. Register (bind) the server object on the registy. 
-            //    The registry may be on a different machine
-            String registryHost = "//localhost/";
-            String serviceName = "echo";
-            Naming.rebind(registryHost + serviceName, server);
-        } catch (MalformedURLException ex) {
-            ex.printStackTrace();
-        } catch (RemoteException ex) {
-            ex.printStackTrace();
-        }
-    }
-\end{verbatim}
-
+\VerbatimInput{src/EchoServerLauncher.java}
+%
 If the security manager or the registry are not running, they must be
 started. The registry will listen on port~1099 by default, but this
 can be changed (e.g.~to pass through a firewall that forbids use of
@@ -329,10 +268,10 @@ reference to the remote server object. It can do so by asking the
 registry:
 
 \begin{verbatim}
-    Remote service = Naming.lookup("//127.0.0.1:1099/echo"); 
-    EchoService echoService = (EchoService) service;
+  Registry registry = LocateRegistry.getRegistry("localhost");
+  EchoService echoService = (EchoService) registry.lookup(name);
 \end{verbatim}
-
+%
 Assuming the name is right ---if not, a \verb+MalformedURLException+
 will be thrown--- and a server has registered with the right name (in
 this case, ``echo'') ---otherwise, the registry will not find it and
@@ -345,7 +284,7 @@ as easy as a normal method call:
 \begin{verbatim}
     String receivedEcho = echoService.echo("Hello!");
 \end{verbatim}
-
+%
 This simple line will fire steps~4 and~5 
 on Figure~\ref{fig:rmiflow}: the stub
 will take string ``Hello!'', convert it into bytes, and send them to
@@ -361,9 +300,9 @@ policy (usually different) on the command line:
 \begin{verbatim}
     java -Djava.security.policy=client.policy EchoClient <someTextHere>
 \end{verbatim}
-
+%
 The client must have access (on its CLASSPATH) to the classes needed
-to serialize and marshall the objects sent and received to the
+to serialise and marshall the objects sent and received to the
 server. This includes the stub and those classes used for parameters
 and return values. 
 
@@ -376,9 +315,7 @@ The steps to be followed on the server side are:
 \item Define the interface of the service.
 \item Implement the service.
 \item Compile the server.
-\item Compile the stub with \verb+rmic+
-\item Write a launcher that binds the server to the registry, and
-  execute it. 
+\item Write a launcher that binds the server to the registry, and execute it. 
 \end{enumerate}
 
 The client needs to look up the server at the registry (by providing a
